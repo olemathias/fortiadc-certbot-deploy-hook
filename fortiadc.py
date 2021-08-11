@@ -1,4 +1,6 @@
 import requests
+from urllib3.util.retry import Retry
+from requests.adapters import HTTPAdapter
 
 class client:
     """Simple FortiADC Client"""
@@ -19,15 +21,13 @@ class client:
 
     def _login(self, username, password):
         url = "{0}/api/user/login".format(self.base_url)
-        r = requests.post(url, json={"username":username, "password":password})
-        if r.status_code != 200 or "token" not in r.json():
+        r = self._request(method="POST", path="user/login", json={"username":username, "password":password})
+        if "token" not in r:
             raise Exception("Login failed")
 
-        self.token = r.json()["token"]
-        self.last_access_time = r.cookies["last_access_time"]
+        self.token = r["token"]
         return True
 
-    # TODO Add retry and backoff
     def _request(self, **kwargs):
         for f in ["path"]:
             if f not in kwargs: raise ValueError("Missing required field: {0}".format(f))
@@ -38,17 +38,26 @@ class client:
             "Cookie": "last_access_time={0}".format(self.last_access_time)
         }
 
+        s = requests.Session()
+        # Retry 5 times, with backoff
+        retries = Retry(total=5,
+                        backoff_factor=0.5,
+                        status_forcelist=[ 500, 502, 503, 504 ])
+        s.mount('https://', HTTPAdapter(max_retries=retries))
+
         if kwargs.get("method", "GET").upper() == "GET":
-            r = requests.get(url, params=kwargs.get("params", None), headers=headers)
+            r = s.get(url, params=kwargs.get("params", None), headers=headers)
             if not r.ok: raise Exception("GET request to {0} failed! Got status_code {1}".format(url, r.status_code))
         elif kwargs.get("method").upper() == "POST":
-            r = requests.post(url, params=kwargs.get("params", None), json=kwargs.get("json", None), data=kwargs.get("data", None), files=kwargs.get("files", None), headers=headers)
+            r = s.post(url, params=kwargs.get("params", None), json=kwargs.get("json", None), data=kwargs.get("data", None), files=kwargs.get("files", None), headers=headers)
             if not r.ok: raise Exception("GET request to {0} failed! Got status_code {1}".format(url, r.status_code))
         elif kwargs.get("method").upper() == "DELETE":
-            r = requests.delete(url, params=kwargs.get("params", None), json=kwargs.get("json", None), data=kwargs.get("data", None), headers=headers)
+            r = s.delete(url, params=kwargs.get("params", None), json=kwargs.get("json", None), data=kwargs.get("data", None), headers=headers)
             if not r.ok: raise Exception("GET request to {0} failed! Got status_code {1}".format(url, r.status_code))
         else:
             raise ValueError("Unsupported method {}".format(kwargs.get("method")))
+
+        self.last_access_time = r.cookies["last_access_time"]
         return r.json()
 
     def get_certificate_local(self):

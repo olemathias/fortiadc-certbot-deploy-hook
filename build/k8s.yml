@@ -1,0 +1,68 @@
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: acme-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  volumeMode: Filesystem
+  resources:
+    requests:
+      storage: 500Mi
+  storageClassName: csi-rbd-sc
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: acme-test
+  labels:
+    app: acme-test
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: acme-test
+  template:
+    metadata:
+      labels:
+        app: acme-test
+    spec:
+      containers:
+        - image: olemathias/fortiadc-certbot-deploy-hook
+          name: acme-test
+          imagePullPolicy: "Always"
+          ports:
+            - name: web
+              containerPort: 80
+          volumeMounts:
+            - name: acme-pv
+              mountPath: /etc/letsencrypt
+          env:
+          - name: FORTIADC_HOST
+            value: ""
+          - name: FORTIADC_USER
+            value: "admin"
+          - name: FORTIADC_PASSWORD
+            value: ""
+          - name: LOCAL_CERT_GROUP
+            value: "k8s-lab-ingress"
+          - name: LE_EMAIL
+            value: ""
+      volumes:
+      - name: acme-pv
+        persistentVolumeClaim:
+          claimName: acme-pvc
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: acme-test
+spec:
+  selector:
+    app: acme-test
+  ports:
+    - port: 80
+      targetPort: web
